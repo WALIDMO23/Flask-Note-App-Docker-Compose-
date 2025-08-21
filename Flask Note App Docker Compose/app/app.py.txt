@@ -1,0 +1,91 @@
+from flask import Flask, request, render_template, redirect, jsonify
+import mysql.connector
+import os
+
+app = Flask(__name__)
+
+# قراءة متغيرات البيئة من .env
+DB_HOST = os.getenv("MYSQL_HOST", "db")
+DB_PORT = int(os.getenv("MYSQL_PORT", 3306))
+DB_USER = os.getenv("MYSQL_USER", "notesuser")
+DB_PASSWORD = os.getenv("MYSQL_PASSWORD", "example_password")
+DB_NAME = os.getenv("MYSQL_DATABASE", "notesdb")
+
+
+def get_db_connection():
+    return mysql.connector.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME
+    )
+
+
+@app.route("/", methods=["GET", "POST"])
+def index():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if request.method == "POST":
+        note_content = request.form.get("note", "").strip()
+        if note_content:  # Validation: reject empty notes
+            cursor.execute("INSERT INTO notes (content) VALUES (%s)", (note_content,))
+            conn.commit()
+        return redirect("/")
+
+    cursor.execute("SELECT id, content, created_at FROM notes ORDER BY created_at DESC")
+    notes = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return render_template("index.html", notes=notes)
+
+
+@app.route("/delete/<int:note_id>", methods=["POST"])
+def delete(note_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM notes WHERE id=%s", (note_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return redirect("/")
+
+
+@app.route("/notes", methods=["GET", "POST"])
+def notes_api():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    if request.method == "POST":
+        data = request.get_json()
+        note_content = data.get("content", "").strip()
+        if not note_content:
+            return jsonify({"error": "Note content cannot be empty"}), 400
+
+        cursor.execute("INSERT INTO notes (content) VALUES (%s)", (note_content,))
+        conn.commit()
+        return jsonify({"message": "Note created"}), 201
+
+    cursor.execute("SELECT id, content, created_at FROM notes ORDER BY created_at DESC")
+    notes = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(notes)
+
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.close()
+        conn.close()
+        return jsonify({"status": "ok"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
